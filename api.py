@@ -9,8 +9,8 @@ import urllib.parse
 import requests
 import sys
 
-print(f"Python version: {sys.version}")
-print(f"Pandas version: {pd.__version__}")
+print(f"🐍 Python version: {sys.version}")
+print(f"📊 Pandas version: {pd.__version__}")
 
 app = Flask(__name__)
 CORS(app)
@@ -32,7 +32,7 @@ def load_excel_data(file_path):
         print(f"✅ Loaded {len(df)} records from {file_path}")
         return df
     except Exception as e:
-        print(f"❌ Error loading Excel: {str(e)}")
+        print(f"❌ Error: {str(e)}")
         return None
 
 def get_online_time():
@@ -240,7 +240,7 @@ def health_check():
         'status': 'healthy',
         'message': 'Flask API is running',
         'python_version': sys.version,
-        'pandas_version': pd.__version__
+        'pandas_version': str(pd.__version__)
     })
 
 @app.route('/', methods=['GET'])
