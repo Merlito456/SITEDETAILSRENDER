@@ -4,12 +4,8 @@ services:
     runtime: python
     repo: https://github.com/Merlito456/SITEDETAILSRENDER
     branch: main
-    buildCommand: |
-      pip install --upgrade pip
-      pip install pandas openpyxl flask flask-cors requests
-    startCommand: python api.py
+    buildCommand: pip install -r requirements_api.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT api:app
     envVars:
       - key: PORT
         value: 5000
-      - key: PYTHON_VERSION
-        value: 3.11.0
