@@ -1,9 +1,15 @@
 services:
   - type: web
-    name: gps-extractor-api
+    name: sitedetailsrender
     runtime: python
-    buildCommand: pip install -r requirements_api.txt
+    repo: https://github.com/Merlito456/SITEDETAILSRENDER
+    branch: main
+    buildCommand: |
+      pip install --upgrade pip
+      pip install pandas openpyxl flask flask-cors requests
     startCommand: python api.py
     envVars:
       - key: PORT
         value: 5000
+      - key: PYTHON_VERSION
+        value: 3.11.0
