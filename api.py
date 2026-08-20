@@ -7,26 +7,32 @@ import os
 from datetime import datetime, timedelta
 import urllib.parse
 import requests
+import sys
+
+print(f"Python version: {sys.version}")
+print(f"Pandas version: {pd.__version__}")
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)
 
 # ============================================================
-# SECURITY CONFIG (MUST MATCH YOUR STREAMLIT APP)
+# SECURITY CONFIG
 # ============================================================
 SECRET_KEY = "YOUR_SECRET_KEY_HERE_CHANGE_THIS_TO_A_RANDOM_STRING_12345"
 TOKEN_EXPIRY_DAYS = 30
 
 # ============================================================
-# COPY YOUR SECURITY FUNCTIONS FROM STREAMLIT APP
+# SECURITY FUNCTIONS
 # ============================================================
 def load_excel_data(file_path):
     try:
         if not os.path.exists(file_path):
             return None
         df = pd.read_excel(file_path, engine='openpyxl')
+        print(f"Loaded {len(df)} records from {file_path}")
         return df
     except Exception as e:
+        print(f"Error loading Excel: {str(e)}")
         return None
 
 def get_online_time():
@@ -166,12 +172,7 @@ def validate_token(token, df, device_fingerprint=None):
 # ============================================================
 @app.route('/api/validate', methods=['GET', 'POST'])
 def api_validate():
-    """
-    API endpoint for Android app validation.
-    Supports both GET and POST methods.
-    """
     try:
-        # Get parameters from GET or POST
         if request.method == 'POST':
             data = request.get_json()
             if data:
@@ -193,11 +194,19 @@ def api_validate():
                 'error': 'Missing token parameter'
             })
         
-        # Load data
-        df = load_excel_data("database.xlsx")
-        if df is None:
-            if os.path.exists("data/database.xlsx"):
-                df = load_excel_data("data/database.xlsx")
+        # Try multiple paths for database file
+        df = None
+        possible_paths = [
+            "database.xlsx",
+            "data/database.xlsx",
+            "/opt/render/project/src/database.xlsx",
+            "/opt/render/project/src/data/database.xlsx"
+        ]
+        
+        for path in possible_paths:
+            df = load_excel_data(path)
+            if df is not None:
+                break
         
         if df is None or df.empty:
             return jsonify({
@@ -205,7 +214,6 @@ def api_validate():
                 'error': 'No data available. Please upload database.xlsx'
             })
         
-        # Validate token
         site_data, error = validate_token(token, df, device_fingerprint)
         
         if site_data:
@@ -228,25 +236,26 @@ def api_validate():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
-        'message': 'Flask API is running'
+        'message': 'Flask API is running',
+        'python_version': sys.version,
+        'pandas_version': pd.__version__
     })
 
-@app.route('/api/info', methods=['GET'])
-def api_info():
-    """Get API information"""
+@app.route('/', methods=['GET'])
+def home():
     return jsonify({
         'name': 'GPS Extractor API',
         'version': '1.0',
-        'endpoints': [
-            '/api/validate (GET/POST)',
-            '/api/health (GET)',
-            '/api/info (GET)'
-        ]
+        'endpoints': {
+            '/api/validate': 'Validate token with device fingerprint',
+            '/api/health': 'Health check',
+            '/': 'This info page'
+        }
     })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"Starting Flask API on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
