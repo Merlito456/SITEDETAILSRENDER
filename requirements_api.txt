@@ -1,5 +1,6 @@
-flask
-flask-cors
-pandas
-openpyxl
-requests
+flask==2.3.3
+flask-cors==4.0.0
+pandas==2.0.3
+openpyxl==3.1.2
+requests==2.31.0
+gunicorn==21.2.0
