@@ -8,36 +8,69 @@ from datetime import datetime, timedelta
 import urllib.parse
 import requests
 import sys
-
-# Vercel requires this special import
-from vercel import Vercel
+import tempfile
 
 app = Flask(__name__)
 CORS(app)
 
-# ============================================================
-# SECURITY CONFIG (same as your original)
-# ============================================================
 SECRET_KEY = os.environ.get('SECRET_KEY', "YOUR_SECRET_KEY_HERE_CHANGE_THIS_TO_A_RANDOM_STRING_12345")
 TOKEN_EXPIRY_DAYS = 30
 
-# ============================================================
-# YOUR EXISTING FUNCTIONS (copy all from api.py)
-# ============================================================
-# Copy all your functions here: load_excel_data, get_online_time, 
-# get_site_by_plaid, safe_str, validate_device, validate_token
+# All your existing functions go here...
 
 @app.route('/api/validate', methods=['GET', 'POST'])
 def api_validate():
-    # Your existing validation code
-    pass
+    try:
+        if request.method == 'POST':
+            data = request.get_json()
+            if data:
+                token = data.get('token', '')
+                device_fingerprint = data.get('device_fingerprint', '')
+            else:
+                token = request.form.get('token', '')
+                device_fingerprint = request.form.get('device_fingerprint', '')
+        else:
+            token = request.args.get('token', '')
+            device_fingerprint = request.args.get('device_fp', '')
+        
+        if not token:
+            return jsonify({'success': False, 'error': 'Missing token parameter'})
+        
+        # Handle database file - for Vercel, we need to handle this differently
+        df = None
+        possible_paths = [
+            "/tmp/database.xlsx",  # Vercel temp dir
+            "database.xlsx",
+            "data/database.xlsx"
+        ]
+        
+        for path in possible_paths:
+            df = load_excel_data(path)
+            if df is not None:
+                break
+        
+        if df is None or df.empty:
+            return jsonify({
+                'success': False, 
+                'error': 'No data available. Please upload database.xlsx'
+            })
+        
+        site_data, error = validate_token(token, df, device_fingerprint)
+        
+        if site_data:
+            clean_data = {k: v for k, v in site_data.items() if not k.startswith('_')}
+            return jsonify({'success': True, 'data': clean_data})
+        else:
+            return jsonify({'success': False, 'error': error or 'Validation failed'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Server error: {str(e)}'})
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
     return jsonify({
         'status': 'healthy',
         'platform': 'Vercel',
-        'message': 'Flask API is running on Vercel',
         'python_version': sys.version,
         'pandas_version': str(pd.__version__)
     })
@@ -45,22 +78,14 @@ def health_check():
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
-        'name': 'GPS Extractor API',
+        'name': 'GPS Extractor API (Vercel)',
         'version': '1.0',
-        'platform': 'Vercel',
-        'status': 'running',
-        'endpoints': {
-            '/': 'This info page',
-            '/api/health': 'Health check',
-            '/api/validate': 'Validate token with device fingerprint'
-        }
+        'status': 'running'
     })
 
-# Vercel handler
-def handler(request, **kwargs):
+# For Vercel serverless
+def handler(request, context):
     return app(request.environ, start_response)
 
-# For local testing
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+def start_response(status, headers):
+    return status, headers
