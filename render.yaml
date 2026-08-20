@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: gps-extractor-api
+    runtime: python
+    buildCommand: pip install -r requirements_api.txt
+    startCommand: python api.py
+    envVars:
+      - key: PORT
+        value: 5000
