@@ -236,11 +236,17 @@ def api_validate():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
+    """Health check endpoint - returns API status"""
     return jsonify({
         'status': 'healthy',
         'message': 'Flask API is running',
         'python_version': sys.version,
-        'pandas_version': str(pd.__version__)
+        'pandas_version': str(pd.__version__),
+        'endpoints': {
+            '/': 'API Info',
+            '/api/health': 'Health check',
+            '/api/validate': 'Token validation (GET/POST)'
+        }
     })
 
 @app.route('/', methods=['GET'])
@@ -248,10 +254,11 @@ def home():
     return jsonify({
         'name': 'GPS Extractor API',
         'version': '1.0',
+        'status': 'running',
         'endpoints': {
-            '/api/validate': 'Validate token with device fingerprint',
+            '/': 'This info page',
             '/api/health': 'Health check',
-            '/': 'This info page'
+            '/api/validate': 'Validate token with device fingerprint'
         }
     })
 
