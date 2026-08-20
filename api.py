@@ -29,10 +29,10 @@ def load_excel_data(file_path):
         if not os.path.exists(file_path):
             return None
         df = pd.read_excel(file_path, engine='openpyxl')
-        print(f"Loaded {len(df)} records from {file_path}")
+        print(f"✅ Loaded {len(df)} records from {file_path}")
         return df
     except Exception as e:
-        print(f"Error loading Excel: {str(e)}")
+        print(f"❌ Error loading Excel: {str(e)}")
         return None
 
 def get_online_time():
@@ -257,5 +257,5 @@ def home():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print(f"Starting Flask API on port {port}")
+    print(f"🚀 Starting Flask API on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
