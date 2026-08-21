@@ -59,11 +59,52 @@ def get_online_time():
         return None
 
 def get_site_by_plaid(df, plaid):
+    """
+    Get site data by PLAID with fixes for:
+    - Barangay (Column L) - explicitly fetch from column index 11
+    - Contact Number - restore leading zero
+    """
     if df is None or df.empty:
         return None
     site = df[df['PLAID'].astype(str).str.strip() == str(plaid).strip()]
     if not site.empty:
-        return site.iloc[0].to_dict()
+        row = site.iloc[0]
+        site_dict = row.to_dict()
+        
+        # ============================================================
+        # FIX 1: Explicitly fetch Barangay from Column L (Index 11)
+        # ============================================================
+        if pd.isna(site_dict.get('BARANGAY')) or str(site_dict.get('BARANGAY')).strip() == "":
+            try:
+                val = row.iloc[11]  # Column L (0-indexed, so 11 is the 12th column)
+                if not pd.isna(val):
+                    site_dict['BARANGAY'] = str(val).strip()
+                    print(f"✅ Barangay from Column L: {site_dict['BARANGAY']}")
+            except Exception as e:
+                print(f"⚠️ Could not fetch Barangay from Column L: {str(e)}")
+        
+        # ============================================================
+        # FIX 2: Restore leading zero to Contact Number
+        # ============================================================
+        contact = site_dict.get('CONTACT NUMBER')
+        if contact and not str(contact).startswith('0'):
+            try:
+                # Try to convert to integer to remove decimals, then add leading zero
+                contact_str = str(contact).strip()
+                # Remove any decimal points
+                if '.' in contact_str:
+                    contact_str = contact_str.split('.')[0]
+                # Remove any non-digit characters except plus sign
+                contact_str = ''.join(ch for ch in contact_str if ch.isdigit() or ch == '+')
+                if contact_str and not contact_str.startswith('0'):
+                    site_dict['CONTACT NUMBER'] = "0" + contact_str
+                    print(f"✅ Fixed Contact Number: {site_dict['CONTACT NUMBER']}")
+            except Exception as e:
+                print(f"⚠️ Could not fix Contact Number: {str(e)}")
+                # Fallback: just add leading zero
+                site_dict['CONTACT NUMBER'] = "0" + str(contact)
+        
+        return site_dict
     return None
 
 def get_site_by_name(df, site_name):
@@ -71,7 +112,31 @@ def get_site_by_name(df, site_name):
         return None
     site = df[df['SITE'].astype(str).str.strip().str.upper() == str(site_name).strip().upper()]
     if not site.empty:
-        return site.iloc[0].to_dict()
+        row = site.iloc[0]
+        site_dict = row.to_dict()
+        
+        # Apply the same fixes for Barangay and Contact Number
+        if pd.isna(site_dict.get('BARANGAY')) or str(site_dict.get('BARANGAY')).strip() == "":
+            try:
+                val = row.iloc[11]
+                if not pd.isna(val):
+                    site_dict['BARANGAY'] = str(val).strip()
+            except:
+                pass
+        
+        contact = site_dict.get('CONTACT NUMBER')
+        if contact and not str(contact).startswith('0'):
+            try:
+                contact_str = str(contact).strip()
+                if '.' in contact_str:
+                    contact_str = contact_str.split('.')[0]
+                contact_str = ''.join(ch for ch in contact_str if ch.isdigit() or ch == '+')
+                if contact_str and not contact_str.startswith('0'):
+                    site_dict['CONTACT NUMBER'] = "0" + contact_str
+            except:
+                site_dict['CONTACT NUMBER'] = "0" + str(contact)
+        
+        return site_dict
     return None
 
 def safe_str(val):
@@ -128,12 +193,6 @@ def validate_device(device_to_check, allowed_devices_hashed):
 def validate_token(token, df, device_fingerprint=None, search_site=None):
     """
     Validate a token and optionally search for a site by name or PLAID.
-    
-    Args:
-        token: The token string to validate
-        df: The pandas DataFrame containing site data
-        device_fingerprint: The device fingerprint for validation
-        search_site: Optional - search for site by SITE (Column B) or PLAID (Column A)
     """
     try:
         token = token.strip()
@@ -205,7 +264,6 @@ def validate_token(token, df, device_fingerprint=None, search_site=None):
         # DEVICE VALIDATION - CORRECTED FOR MULTIPLE IDS
         # ============================================================
         if allowed_devices and device_fingerprint:
-            # The Android app sends multiple IDs separated by commas
             ids_to_check = [fp.strip().upper() for fp in device_fingerprint.split(',') if fp.strip()]
             authorized = False
             matched_device = None
@@ -219,14 +277,13 @@ def validate_token(token, df, device_fingerprint=None, search_site=None):
             if not authorized:
                 return None, "Device not authorized. MAC Address, IMEI, or Android ID not recognized."
             
-            # Log which device matched (for debugging)
             print(f"✅ Device authorized: {matched_device[:20] if matched_device else 'Unknown'}...")
             
         elif allowed_devices:
             return None, "Device verification required. Please ensure your device is registered."
         
         # ============================================================
-        # SITE SEARCH - The Fix!
+        # SITE SEARCH
         # ============================================================
         if search_site and not df.empty:
             # Search by Site Name (Column B) first
@@ -265,24 +322,23 @@ def validate_token(token, df, device_fingerprint=None, search_site=None):
 @app.route('/api/validate', methods=['GET', 'POST'])
 def api_validate():
     try:
-        # Get parameters from GET or POST
         if request.method == 'POST':
             data = request.get_json()
             if data:
                 token = data.get('token', '')
                 device_fingerprint = data.get('device_fingerprint', '')
                 device_id = data.get('device_id', '')
-                search_site = data.get('search_site', '')  # Capture search_site
+                search_site = data.get('search_site', '')
             else:
                 token = request.form.get('token', '')
                 device_fingerprint = request.form.get('device_fingerprint', '')
                 device_id = request.form.get('device_id', '')
-                search_site = request.form.get('search_site', '')  # Capture search_site
+                search_site = request.form.get('search_site', '')
         else:
             token = request.args.get('token', '')
             device_fingerprint = request.args.get('device_fp', '')
             device_id = request.args.get('device_id', '')
-            search_site = request.args.get('search_site', '')  # Capture search_site
+            search_site = request.args.get('search_site', '')
         
         if not token:
             return jsonify({
@@ -310,7 +366,6 @@ def api_validate():
                 'error': 'No data available. Please upload database.xlsx'
             })
         
-        # Pass search_site to the validator
         site_data, error = validate_token(token, df, device_fingerprint, search_site)
         
         if site_data:
@@ -359,7 +414,7 @@ def validate_token_endpoint():
         
         token = data.get('token', '')
         device_fingerprint = data.get('device_fingerprint', '')
-        search_site = data.get('search_site', '')  # Capture search_site
+        search_site = data.get('search_site', '')
         
         if not token:
             return jsonify({
@@ -386,7 +441,6 @@ def validate_token_endpoint():
                 'error': 'No data available. Please upload database.xlsx'
             })
         
-        # Pass search_site to the validator
         site_data, error = validate_token(token, df, device_fingerprint, search_site)
         
         if site_data:
@@ -439,7 +493,6 @@ def search_site_endpoint():
                 'error': 'Missing search_term parameter'
             })
         
-        # Load data
         df = None
         possible_paths = [
             "database.xlsx",
@@ -466,7 +519,6 @@ def search_site_endpoint():
             site_data = get_site_by_plaid(df, search_term)
         
         if site_data:
-            # Remove internal fields
             clean_data = {k: v for k, v in site_data.items() if not k.startswith('_')}
             return jsonify({
                 'success': True,
@@ -556,9 +608,9 @@ def health_check():
             '/api/search-site': 'Search site by name or PLAID (GET/POST)',
             '/api/decode-token': 'Decode token without validation (POST)'
         },
-        'search_features': {
-            'search_site': 'Search by Site Name (Column B) or PLAID (Column A)',
-            'supports_hub_asn': 'Search for HUB/ASN sites'
+        'fixes_applied': {
+            'barangay': 'Fetches Barangay from Column L (index 11)',
+            'contact_number': 'Restores leading zero to contact numbers'
         }
     })
 
@@ -566,12 +618,12 @@ def health_check():
 def home():
     return jsonify({
         'name': 'GPS Extractor API',
-        'version': '2.0',
+        'version': '2.1',
         'status': 'running',
         'endpoints': {
             '/': 'This info page',
             '/api/health': 'Health check',
-            '/api/validate': 'Validate token with device fingerprint and search support (GET/POST)',
+            '/api/validate': 'Validate token with device fingerprint and search support',
             '/api/validate-token': 'Validate token with request body (POST)',
             '/api/search-site': 'Search site by name or PLAID (GET/POST)',
             '/api/decode-token': 'Decode token without validation (POST)'
@@ -586,6 +638,10 @@ def home():
         'search_features': {
             'search_site': 'Search by Site Name (Column B) or PLAID (Column A)',
             'supports_hub_asn': 'Search for HUB/ASN sites'
+        },
+        'data_fixes': {
+            'barangay': '✅ Barangay fetched from Column L (index 11)',
+            'contact_number': '✅ Leading zero restored to contact numbers'
         }
     })
 
