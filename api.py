@@ -80,9 +80,17 @@ def safe_str(val):
     return str(val).strip()
 
 def validate_device(device_to_check, allowed_devices_hashed):
+    """
+    Validate a single device ID against allowed hashed devices.
+    Supports MAC:XX:XX:XX:XX:XX:XX, IMEI:123456789012345, ANDROID:abc123def456
+    """
     if not device_to_check or not allowed_devices_hashed:
         return False
     
+    # Clean the device ID
+    device_to_check = device_to_check.strip().upper()
+    
+    # Try exact match first
     hashed = hashlib.sha256(device_to_check.encode()).hexdigest()
     if hashed in allowed_devices_hashed:
         return True
@@ -95,6 +103,25 @@ def validate_device(device_to_check, allowed_devices_hashed):
             hashed = hashlib.sha256(without_prefix.encode()).hexdigest()
             if hashed in allowed_devices_hashed:
                 return True
+    
+    # Also check if the entire device_to_check is a plain number (IMEI without prefix)
+    if device_to_check.isdigit():
+        hashed = hashlib.sha256(f"IMEI:{device_to_check}".encode()).hexdigest()
+        if hashed in allowed_devices_hashed:
+            return True
+        hashed = hashlib.sha256(device_to_check.encode()).hexdigest()
+        if hashed in allowed_devices_hashed:
+            return True
+    
+    # Check if it's a MAC without prefix
+    if ':' in device_to_check or '-' in device_to_check:
+        mac_clean = device_to_check.replace('-', ':')
+        hashed = hashlib.sha256(f"MAC:{mac_clean}".encode()).hexdigest()
+        if hashed in allowed_devices_hashed:
+            return True
+        hashed = hashlib.sha256(mac_clean.encode()).hexdigest()
+        if hashed in allowed_devices_hashed:
+            return True
     
     return False
 
@@ -126,9 +153,9 @@ def validate_token(token, df, device_fingerprint=None):
         created_str = payload.get('c')
         expires_str = payload.get('e')
         site_plaid = payload.get('s')
-        site_name = payload.get('n', '')  # Site Name (optional - for backward compatibility)
-        start_date_str = payload.get('sd', '')  # Start Date
-        end_date_str = payload.get('ed', '')    # End Date
+        site_name = payload.get('n', '')
+        start_date_str = payload.get('sd', '')
+        end_date_str = payload.get('ed', '')
         allowed_devices = payload.get('d', [])
         raw_devices = payload.get('raw', '')
         
@@ -165,10 +192,28 @@ def validate_token(token, df, device_fingerprint=None):
             except:
                 pass
         
-        # DEVICE VALIDATION
+        # ============================================================
+        # DEVICE VALIDATION - CORRECTED FOR MULTIPLE IDS
+        # ============================================================
         if allowed_devices and device_fingerprint:
-            if not validate_device(device_fingerprint, allowed_devices):
+            # The Android app sends multiple IDs separated by commas
+            # Example: "MAC:02:00:00:00:01:00,IMEI:358240051111110,ANDROID:b4efb2d4412cba2b"
+            ids_to_check = [fp.strip().upper() for fp in device_fingerprint.split(',') if fp.strip()]
+            authorized = False
+            matched_device = None
+            
+            for device_id in ids_to_check:
+                if validate_device(device_id, allowed_devices):
+                    authorized = True
+                    matched_device = device_id
+                    break
+            
+            if not authorized:
                 return None, "Device not authorized. MAC Address, IMEI, or Android ID not recognized."
+            
+            # Log which device matched (for debugging)
+            print(f"✅ Device authorized: {matched_device[:20]}...")
+            
         elif allowed_devices:
             return None, "Device verification required. Please ensure your device is registered."
         
@@ -186,7 +231,6 @@ def validate_token(token, df, device_fingerprint=None):
         site_data['_start_date'] = start_date_str
         site_data['_end_date'] = end_date_str
         
-        # If site_name is in token, use it (for backward compatibility)
         if site_name:
             site_data['_site_name'] = site_name
         
@@ -248,7 +292,6 @@ def api_validate():
             # Remove internal fields before sending
             clean_data = {k: v for k, v in site_data.items() if not k.startswith('_')}
             
-            # Add token metadata to response
             response_data = {
                 'success': True,
                 'data': clean_data,
@@ -275,21 +318,6 @@ def api_validate():
             'success': False,
             'error': f'Server error: {str(e)}'
         })
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint - returns API status"""
-    return jsonify({
-        'status': 'healthy',
-        'message': 'Flask API is running',
-        'python_version': sys.version,
-        'pandas_version': str(pd.__version__),
-        'endpoints': {
-            '/': 'API Info',
-            '/api/health': 'Health check',
-            '/api/validate': 'Token validation (GET/POST)'
-        }
-    })
 
 @app.route('/api/validate-token', methods=['POST'])
 def validate_token_endpoint():
@@ -417,6 +445,23 @@ def decode_token():
             'success': False,
             'error': f'Server error: {str(e)}'
         })
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint - returns API status"""
+    return jsonify({
+        'status': 'healthy',
+        'message': 'Flask API is running',
+        'python_version': sys.version,
+        'pandas_version': str(pd.__version__),
+        'endpoints': {
+            '/': 'API Info',
+            '/api/health': 'Health check',
+            '/api/validate': 'Token validation (GET/POST)',
+            '/api/validate-token': 'Token validation with request body (POST)',
+            '/api/decode-token': 'Decode token without validation (POST)'
+        }
+    })
 
 @app.route('/', methods=['GET'])
 def home():
