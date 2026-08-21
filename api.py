@@ -125,7 +125,16 @@ def validate_device(device_to_check, allowed_devices_hashed):
     
     return False
 
-def validate_token(token, df, device_fingerprint=None):
+def validate_token(token, df, device_fingerprint=None, search_site=None):
+    """
+    Validate a token and optionally search for a site by name or PLAID.
+    
+    Args:
+        token: The token string to validate
+        df: The pandas DataFrame containing site data
+        device_fingerprint: The device fingerprint for validation
+        search_site: Optional - search for site by SITE (Column B) or PLAID (Column A)
+    """
     try:
         token = token.strip()
         if '%' in token:
@@ -197,7 +206,6 @@ def validate_token(token, df, device_fingerprint=None):
         # ============================================================
         if allowed_devices and device_fingerprint:
             # The Android app sends multiple IDs separated by commas
-            # Example: "MAC:02:00:00:00:01:00,IMEI:358240051111110,ANDROID:b4efb2d4412cba2b"
             ids_to_check = [fp.strip().upper() for fp in device_fingerprint.split(',') if fp.strip()]
             authorized = False
             matched_device = None
@@ -212,15 +220,27 @@ def validate_token(token, df, device_fingerprint=None):
                 return None, "Device not authorized. MAC Address, IMEI, or Android ID not recognized."
             
             # Log which device matched (for debugging)
-            print(f"✅ Device authorized: {matched_device[:20]}...")
+            print(f"✅ Device authorized: {matched_device[:20] if matched_device else 'Unknown'}...")
             
         elif allowed_devices:
             return None, "Device verification required. Please ensure your device is registered."
         
-        # Get site data
-        site_data = get_site_by_plaid(df, site_plaid)
-        if site_data is None:
-            return None, f"Site not found: {site_plaid}"
+        # ============================================================
+        # SITE SEARCH - The Fix!
+        # ============================================================
+        if search_site and not df.empty:
+            # Search by Site Name (Column B) first
+            site_data = get_site_by_name(df, search_site)
+            if site_data is None:
+                # If not found by name, try PLAID (Column A)
+                site_data = get_site_by_plaid(df, search_site)
+            if site_data is None:
+                return None, f"Site not found: {search_site}"
+        else:
+            # Standard login: return the site bound to this token (site_plaid)
+            site_data = get_site_by_plaid(df, site_plaid)
+            if site_data is None:
+                return None, f"Site not found: {site_plaid}"
         
         # Add metadata to response
         site_data['_token_created'] = created_str
@@ -245,20 +265,24 @@ def validate_token(token, df, device_fingerprint=None):
 @app.route('/api/validate', methods=['GET', 'POST'])
 def api_validate():
     try:
+        # Get parameters from GET or POST
         if request.method == 'POST':
             data = request.get_json()
             if data:
                 token = data.get('token', '')
                 device_fingerprint = data.get('device_fingerprint', '')
                 device_id = data.get('device_id', '')
+                search_site = data.get('search_site', '')  # Capture search_site
             else:
                 token = request.form.get('token', '')
                 device_fingerprint = request.form.get('device_fingerprint', '')
                 device_id = request.form.get('device_id', '')
+                search_site = request.form.get('search_site', '')  # Capture search_site
         else:
             token = request.args.get('token', '')
             device_fingerprint = request.args.get('device_fp', '')
             device_id = request.args.get('device_id', '')
+            search_site = request.args.get('search_site', '')  # Capture search_site
         
         if not token:
             return jsonify({
@@ -286,7 +310,8 @@ def api_validate():
                 'error': 'No data available. Please upload database.xlsx'
             })
         
-        site_data, error = validate_token(token, df, device_fingerprint)
+        # Pass search_site to the validator
+        site_data, error = validate_token(token, df, device_fingerprint, search_site)
         
         if site_data:
             # Remove internal fields before sending
@@ -334,6 +359,7 @@ def validate_token_endpoint():
         
         token = data.get('token', '')
         device_fingerprint = data.get('device_fingerprint', '')
+        search_site = data.get('search_site', '')  # Capture search_site
         
         if not token:
             return jsonify({
@@ -360,7 +386,8 @@ def validate_token_endpoint():
                 'error': 'No data available. Please upload database.xlsx'
             })
         
-        site_data, error = validate_token(token, df, device_fingerprint)
+        # Pass search_site to the validator
+        site_data, error = validate_token(token, df, device_fingerprint, search_site)
         
         if site_data:
             clean_data = {k: v for k, v in site_data.items() if not k.startswith('_')}
@@ -382,6 +409,73 @@ def validate_token_endpoint():
             return jsonify({
                 'success': False,
                 'error': error or 'Validation failed'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Server error: {str(e)}'
+        })
+
+@app.route('/api/search-site', methods=['GET', 'POST'])
+def search_site_endpoint():
+    """
+    Search for a site by name or PLAID without requiring a token.
+    Useful for HUB/ASN lookups.
+    """
+    try:
+        if request.method == 'POST':
+            data = request.get_json()
+            if data:
+                search_term = data.get('search_term', '')
+            else:
+                search_term = request.form.get('search_term', '')
+        else:
+            search_term = request.args.get('search_term', '')
+        
+        if not search_term:
+            return jsonify({
+                'success': False,
+                'error': 'Missing search_term parameter'
+            })
+        
+        # Load data
+        df = None
+        possible_paths = [
+            "database.xlsx",
+            "data/database.xlsx",
+            "/opt/render/project/src/database.xlsx",
+            "/opt/render/project/src/data/database.xlsx"
+        ]
+        
+        for path in possible_paths:
+            df = load_excel_data(path)
+            if df is not None:
+                break
+        
+        if df is None or df.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No data available. Please upload database.xlsx'
+            })
+        
+        # Search by Site Name first
+        site_data = get_site_by_name(df, search_term)
+        if site_data is None:
+            # Try PLAID
+            site_data = get_site_by_plaid(df, search_term)
+        
+        if site_data:
+            # Remove internal fields
+            clean_data = {k: v for k, v in site_data.items() if not k.startswith('_')}
+            return jsonify({
+                'success': True,
+                'data': clean_data
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Site not found: {search_term}'
             })
             
     except Exception as e:
@@ -457,9 +551,14 @@ def health_check():
         'endpoints': {
             '/': 'API Info',
             '/api/health': 'Health check',
-            '/api/validate': 'Token validation (GET/POST)',
+            '/api/validate': 'Token validation with search support (GET/POST)',
             '/api/validate-token': 'Token validation with request body (POST)',
+            '/api/search-site': 'Search site by name or PLAID (GET/POST)',
             '/api/decode-token': 'Decode token without validation (POST)'
+        },
+        'search_features': {
+            'search_site': 'Search by Site Name (Column B) or PLAID (Column A)',
+            'supports_hub_asn': 'Search for HUB/ASN sites'
         }
     })
 
@@ -472,8 +571,9 @@ def home():
         'endpoints': {
             '/': 'This info page',
             '/api/health': 'Health check',
-            '/api/validate': 'Validate token with device fingerprint (GET/POST)',
+            '/api/validate': 'Validate token with device fingerprint and search support (GET/POST)',
             '/api/validate-token': 'Validate token with request body (POST)',
+            '/api/search-site': 'Search site by name or PLAID (GET/POST)',
             '/api/decode-token': 'Decode token without validation (POST)'
         },
         'token_features': {
@@ -482,6 +582,10 @@ def home():
             'start_date': 'Token validity start date',
             'end_date': 'Token validity end date',
             'device_fingerprint': 'MAC Address, IMEI, or Android ID'
+        },
+        'search_features': {
+            'search_site': 'Search by Site Name (Column B) or PLAID (Column A)',
+            'supports_hub_asn': 'Search for HUB/ASN sites'
         }
     })
 
